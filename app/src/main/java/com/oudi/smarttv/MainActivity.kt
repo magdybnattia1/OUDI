@@ -150,7 +150,9 @@ private fun OudiScreen() {
                                         onDevicesChanged = { discoveredTvs = it },
                                         onStatusChanged = {
                                             discoveryStatus = it
-                                            if (it.startsWith("فشل") || it.startsWith("تعذر")) isSearching = false
+                                            if (it.startsWith("فشل") || it.startsWith("تعذر") || it.startsWith("انتهى")) {
+                                                isSearching = false
+                                            }
                                         }
                                     )
                                 },
