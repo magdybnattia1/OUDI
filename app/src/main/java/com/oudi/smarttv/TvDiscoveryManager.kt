@@ -86,6 +86,7 @@ class TvDiscoveryManager(context: Context) {
 
             override fun onDiscoveryStopped(serviceType: String) {
                 isDiscovering = false
+                postStatus("انتهى البحث عن التلفزيون.")
                 releaseMulticastLock()
             }
 
@@ -132,8 +133,8 @@ class TvDiscoveryManager(context: Context) {
 
     @Suppress("DEPRECATION")
     private fun acquireMulticastLockIfNeeded() {
-        // Android 12 and earlier need an explicit lock to receive mDNS multicast packets.
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S) {
+        // Android 13 and earlier may need an explicit lock, depending on the system extension level.
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.TIRAMISU) {
             val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             multicastLock = wifiManager.createMulticastLock("OUDI-mdns-discovery").apply {
                 setReferenceCounted(false)
