@@ -24,6 +24,7 @@ class TvDiscoveryManager(context: Context) {
 
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
+    private var scanTimeout: Runnable? = null
     private var isDiscovering = false
     private var devicesCallback: ((List<TvDevice>) -> Unit)? = null
     private var statusCallback: ((String) -> Unit)? = null
@@ -86,12 +87,14 @@ class TvDiscoveryManager(context: Context) {
 
             override fun onDiscoveryStopped(serviceType: String) {
                 isDiscovering = false
-                postStatus("انتهى البحث عن التلفزيون.")
+                cancelScanTimeout()
+                postStatus(discoveryFinishedMessage())
                 releaseMulticastLock()
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
                 isDiscovering = false
+                cancelScanTimeout()
                 postStatus("فشل بدء البحث (رمز $errorCode). جرّب إيقاف البحث ثم تشغيله.")
                 safelyStop(this)
                 releaseMulticastLock()
@@ -99,6 +102,7 @@ class TvDiscoveryManager(context: Context) {
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
                 isDiscovering = false
+                cancelScanTimeout()
                 postStatus("تعذر إيقاف البحث بشكل طبيعي (رمز $errorCode).")
                 releaseMulticastLock()
             }
@@ -108,19 +112,53 @@ class TvDiscoveryManager(context: Context) {
         isDiscovering = true
         try {
             nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+            scheduleScanTimeout(listener)
         } catch (error: Exception) {
             isDiscovering = false
+            cancelScanTimeout()
             releaseMulticastLock()
-            postStatus("تعذر البحث عن التلفزيون: ${error.message ?: "خطأ غير معروف"}")
+            postStatus("تعذر البحث عن التلفزيون: " + (error.message ?: "خطأ غير معروف"))
         }
     }
 
     fun stopDiscovery() {
+        cancelScanTimeout()
         val listener = discoveryListener
         if (listener != null && isDiscovering) safelyStop(listener)
         isDiscovering = false
         discoveryListener = null
         releaseMulticastLock()
+    }
+
+    private fun scheduleScanTimeout(listener: NsdManager.DiscoveryListener) {
+        cancelScanTimeout()
+        val timeout = Runnable {
+            if (discoveryListener !== listener || !isDiscovering) return@Runnable
+
+            try {
+                nsdManager.stopServiceDiscovery(listener)
+            } catch (_: Exception) {
+                isDiscovering = false
+                releaseMulticastLock()
+                postStatus(discoveryFinishedMessage())
+            }
+        }
+        scanTimeout = timeout
+        mainHandler.postDelayed(timeout, DISCOVERY_TIMEOUT_MS)
+    }
+
+    private fun cancelScanTimeout() {
+        scanTimeout?.let(mainHandler::removeCallbacks)
+        scanTimeout = null
+    }
+
+    private fun discoveryFinishedMessage(): String {
+        val count = foundDevices.size
+        return if (count == 0) {
+            "انتهى البحث بعد 12 ثانية من غير ما نلاقي تلفزيون. اتأكد من نفس شبكة Wi-Fi."
+        } else {
+            "انتهى البحث. لقينا $count خدمة تلفزيون متوافقة؛ الخطوة التالية هي الاقتران الآمن."
+        }
     }
 
     private fun safelyStop(listener: NsdManager.DiscoveryListener) {
@@ -164,5 +202,6 @@ class TvDiscoveryManager(context: Context) {
 
     companion object {
         const val SERVICE_TYPE = "_androidtvremote2._tcp."
+        private const val DISCOVERY_TIMEOUT_MS = 12_000L
     }
 }
