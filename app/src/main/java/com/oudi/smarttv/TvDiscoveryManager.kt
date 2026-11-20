@@ -12,7 +12,8 @@ import android.os.Looper
 data class TvDevice(
     val name: String,
     val host: String,
-    val port: Int
+    val port: Int,
+    val isManual: Boolean = false
 )
 
 class TvDiscoveryManager(context: Context) {
