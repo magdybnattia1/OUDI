@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 
@@ -41,6 +43,8 @@ private fun OudiScreen() {
     var discoveryStatus by remember { mutableStateOf("لم يبدأ البحث عن التلفزيون بعد.") }
     var discoveredTvs by remember { mutableStateOf<List<TvDevice>>(emptyList()) }
     var isSearching by remember { mutableStateOf(false) }
+    var manualIp by remember { mutableStateOf("") }
+    var manualIpError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(discoveryManager) {
         onDispose { discoveryManager.stopDiscovery() }
@@ -144,10 +148,15 @@ private fun OudiScreen() {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(
                                 onClick = {
-                                    discoveredTvs = emptyList()
+                                    discoveredTvs = discoveredTvs.filter { it.isManual }
                                     isSearching = true
                                     discoveryManager.startDiscovery(
-                                        onDevicesChanged = { discoveredTvs = it },
+                                        onDevicesChanged = { devices ->
+                                            val manualDevices = discoveredTvs.filter { it.isManual }
+                                            discoveredTvs = devices + manualDevices.filterNot { manual ->
+                                                devices.any { found -> found.host == manual.host }
+                                            }
+                                        },
                                         onStatusChanged = {
                                             discoveryStatus = it
                                             if (it.startsWith("فشل") || it.startsWith("تعذر") || it.startsWith("انتهى")) {
@@ -171,6 +180,47 @@ private fun OudiScreen() {
                             ) { Text("إيقاف البحث") }
                         }
 
+                        OutlinedTextField(
+                            value = manualIp,
+                            onValueChange = { value ->
+                                manualIp = value.filter { it.isDigit() || it == '.' }.take(15)
+                                manualIpError = null
+                            },
+                            label = { Text("عنوان IP يدوي (اختياري)") },
+                            placeholder = { Text("192.168.1.25") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Button(
+                            onClick = {
+                                val address = manualIp.trim()
+                                if (!isValidIpv4Address(address)) {
+                                    manualIpError = "اكتب عنوان IPv4 صحيحًا، مثل 192.168.1.25"
+                                } else if (discoveredTvs.any { it.host == address && !it.isManual }) {
+                                    manualIpError = "العنوان ده ظهر بالفعل في نتائج البحث."
+                                } else {
+                                    discoveredTvs = discoveredTvs.filterNot { it.host == address && it.isManual } +
+                                        TvDevice(
+                                            name = "عنوان مضاف يدويًا",
+                                            host = address,
+                                            port = 6467,
+                                            isManual = true
+                                        )
+                                    manualIp = ""
+                                    manualIpError = null
+                                    discoveryStatus = "تمت إضافة العنوان يدويًا. لم يتم اختبار الاتصال أو الاقتران بعد."
+                                }
+                            },
+                            enabled = manualIp.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("إضافة عنوان يدوي")
+                        }
+                        manualIpError?.let {
+                            Text(it, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
+                        }
+
                         if (discoveredTvs.isEmpty()) {
                             Text(
                                 "لم يتم العثور على جهاز حتى الآن.",
@@ -183,7 +233,11 @@ private fun OudiScreen() {
                                 Text(tv.name, color = Color.White, style = MaterialTheme.typography.titleSmall)
                                 Text("${tv.host}:${tv.port}", color = Color(0xFFB8C7D9))
                                 Text(
-                                    "تم اكتشاف الخدمة فقط؛ الاقتران والتحكم لم يُفعّلا بعد.",
+                                    if (tv.isManual) {
+                                        "عنوان مضاف يدويًا؛ لم يتم التحقق من وجود الخدمة أو بدء الاقتران."
+                                    } else {
+                                        "تم اكتشاف الخدمة فقط؛ الاقتران والتحكم لم يُفعّلا بعد."
+                                    },
                                     color = Color(0xFFFFD166),
                                     style = MaterialTheme.typography.bodySmall
                                 )
@@ -193,11 +247,25 @@ private fun OudiScreen() {
                 }
 
                 Text(
-                    "نسخة تجريبية 0.2 — اكتشاف الشبكة مضاف، والاقتران قيد التطوير",
+                    "نسخة تجريبية 0.2.2 — اكتشاف الشبكة مع إدخال IP يدوي، والاقتران قيد التطوير",
                     color = Color(0xFF8294AA),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+
+private fun isValidIpv4Address(value: String): Boolean {
+    val parts = value.trim().split(".")
+    if (parts.size != 4) return false
+
+    return parts.all { part ->
+        if (part.isEmpty() || part.length > 3 || (part.length > 1 && part.startsWith("0"))) {
+            false
+        } else {
+            part.toIntOrNull()?.let { it in 0..255 } ?: false
         }
     }
 }
