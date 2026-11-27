@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,6 +37,9 @@ class MainActivity : ComponentActivity() {
 private fun OudiScreen() {
     val context = androidx.compose.ui.platform.LocalContext.current
     val discoveryManager = remember(context) { TvDiscoveryManager(context) }
+    val coroutineScope = rememberCoroutineScope()
+    var probingHosts by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var probeMessages by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     var heardText by remember { mutableStateOf("اضغط على الميكروفون وقل أمراً للتلفزيون") }
     var response by remember { mutableStateOf("أنا OUDI، جاهز أسمعك 🎙️") }
@@ -186,7 +190,7 @@ private fun OudiScreen() {
                                 manualIp = value.filter { it.isDigit() || it == '.' }.take(15)
                                 manualIpError = null
                             },
-                            label = { Text("عنوان IP يدوي (اختياري)") },
+                            label = { Text("عنوان IP محلي يدوي (اختياري)") },
                             placeholder = { Text("192.168.1.25") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -195,8 +199,8 @@ private fun OudiScreen() {
                         Button(
                             onClick = {
                                 val address = manualIp.trim()
-                                if (!isValidIpv4Address(address)) {
-                                    manualIpError = "اكتب عنوان IPv4 صحيحًا، مثل 192.168.1.25"
+                                if (!isValidLocalIpv4Address(address)) {
+                                    manualIpError = "اكتب عنوان IPv4 محلي من شبكة البيت، مثل 192.168.1.25"
                                 } else if (discoveredTvs.any { it.host == address && !it.isManual }) {
                                     manualIpError = "العنوان ده ظهر بالفعل في نتائج البحث."
                                 } else {
@@ -232,6 +236,34 @@ private fun OudiScreen() {
                                 HorizontalDivider(color = Color(0xFF31445C))
                                 Text(tv.name, color = Color.White, style = MaterialTheme.typography.titleSmall)
                                 Text("${tv.host}:${tv.port}", color = Color(0xFFB8C7D9))
+                                OutlinedButton(
+                                    onClick = {
+                                        val host = tv.host
+                                        probingHosts = probingHosts + host
+                                        probeMessages = probeMessages - host
+                                        coroutineScope.launch {
+                                            val reachable = TvConnectionProbe.isPairingPortReachable(host, tv.port)
+                                            probingHosts = probingHosts - host
+                                            probeMessages = probeMessages + (
+                                                host to if (reachable) {
+                                                    "منفذ TCP ${tv.port} متاح؛ لم يبدأ TLS أو الاقتران."
+                                                } else {
+                                                    "تعذر الوصول لمنفذ TCP ${tv.port}. تأكد من نفس الشبكة وخدمة Android TV Remote."
+                                                }
+                                            )
+                                        }
+                                    },
+                                    enabled = tv.host !in probingHosts
+                                ) {
+                                    Text(if (tv.host in probingHosts) "جارٍ اختبار المنفذ…" else "اختبار منفذ الاقتران")
+                                }
+                                probeMessages[tv.host]?.let { message ->
+                                    Text(
+                                        message,
+                                        color = if (message.startsWith("منفذ TCP")) Color(0xFF6EE7B7) else Color(0xFFFFD166),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
                                 Text(
                                     if (tv.isManual) {
                                         "عنوان مضاف يدويًا؛ لم يتم التحقق من وجود الخدمة أو بدء الاقتران."
@@ -247,7 +279,7 @@ private fun OudiScreen() {
                 }
 
                 Text(
-                    "نسخة تجريبية 0.2.2 — اكتشاف الشبكة مع إدخال IP يدوي، والاقتران قيد التطوير",
+                    "نسخة تجريبية 0.2.3 — اكتشاف الشبكة وفحص منفذ الاقتران، والاقتران قيد التطوير",
                     color = Color(0xFF8294AA),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -257,15 +289,22 @@ private fun OudiScreen() {
 }
 
 
-private fun isValidIpv4Address(value: String): Boolean {
+private fun isValidLocalIpv4Address(value: String): Boolean {
     val parts = value.trim().split(".")
     if (parts.size != 4) return false
 
-    return parts.all { part ->
+    val octets = parts.map { part ->
         if (part.isEmpty() || part.length > 3 || (part.length > 1 && part.startsWith("0"))) {
-            false
-        } else {
-            part.toIntOrNull()?.let { it in 0..255 } ?: false
+            return false
         }
+        part.toIntOrNull()?.takeIf { it in 0..255 } ?: return false
+    }
+
+    return when {
+        octets[0] == 10 -> true
+        octets[0] == 172 -> octets[1] in 16..31
+        octets[0] == 192 -> octets[1] == 168
+        octets[0] == 169 -> octets[1] == 254
+        else -> false
     }
 }
