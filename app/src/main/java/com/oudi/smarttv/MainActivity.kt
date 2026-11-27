@@ -293,11 +293,14 @@ private fun isValidLocalIpv4Address(value: String): Boolean {
     val parts = value.trim().split(".")
     if (parts.size != 4) return false
 
-    val octets = parts.map { part ->
+    val octets = ArrayList<Int>(4)
+    for (part in parts) {
         if (part.isEmpty() || part.length > 3 || (part.length > 1 && part.startsWith("0"))) {
             return false
         }
-        part.toIntOrNull()?.takeIf { it in 0..255 } ?: return false
+        val octet = part.toIntOrNull() ?: return false
+        if (octet !in 0..255) return false
+        octets.add(octet)
     }
 
     return when {
